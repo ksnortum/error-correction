@@ -30,7 +30,7 @@ public class SendController {
 
         for (int i = 0; i < corrupted.length; i++) {
             // decide which bit
-            int bit = RANDOM.nextInt(8);
+            int bit = RANDOM.nextInt(6) + 1;
             int number = (int) Math.pow(2, bit);
 
             // is bit in byte on or off (0 or 1)?

@@ -4,7 +4,7 @@ import correcter.dao.DataAccess;
 import correcter.util.BitUtility;
 import correcter.view.DecodeView;
 
-import java.util.Arrays;
+import java.util.stream.IntStream;
 
 import static correcter.model.GlobalData.DECODED_FILE_NAME;
 import static correcter.model.GlobalData.RECEIVED_FILE_NAME;
@@ -20,98 +20,74 @@ public class DecodeController {
         decodeView.displayCorrected(DECODED_FILE_NAME, corrected);
         boolean[] decoded = decodeCorrected(corrected);
         decodeView.displayDecoded(decoded);
-        boolean[] removed = Arrays.copyOfRange(decoded, 0, decoded.length - decoded.length % 8);
-        decodeView.displayRemoved(removed);
-        char[] textChars = BitUtility.bitsToChars(removed);
+        char[] textChars = BitUtility.bitsToChars(decoded);
         decodeView.displayTextHex(textChars);
         String text = String.valueOf(textChars);
         decodeView.displayText(text);
         dataAccess.writeCharArray(DECODED_FILE_NAME, textChars);
     }
 
-    private boolean[] correctReceived(char[] received) {
-        boolean[] receivedBits = BitUtility.charsToBits(received);
-        boolean[] corrected = receivedBits;
+    private boolean[] correctReceived(char[] receivedChars) {
+        boolean[] received = BitUtility.charsToBits(receivedChars);
 
-        for (int i = 0; i < receivedBits.length; i += 8) {
-            boolean[] eightBits = Arrays.copyOfRange(receivedBits, i, i + 8);
-            Boolean[] dataBits = setDataBits(eightBits);
-            Boolean parityBit = setBitOrNull(eightBits[6], eightBits[7]);
+        for (int receivedIndex = 0; receivedIndex < received.length; receivedIndex += 8) {
+            boolean[] badParity = new boolean[3];
+            badParity[0] = isOnesParityBad(received, receivedIndex);
+            badParity[1] = isTwosParityBad(received, receivedIndex);
+            badParity[2] = isFoursParityBad(received, receivedIndex);
+            int badBit = calculateBadBit(badParity);
 
-            if (parityBit != null) {
-                // correct bad bit
-                int indexToChange = findNullIndex(dataBits);
-                boolean[] twoBits = setTwoBits(dataBits);
-                dataBits[indexToChange] = twoBits[0] == twoBits[1] ? parityBit : !parityBit;
-
-                // set data into corrected array
-                corrected[i] = corrected[i + 1] = dataBits[0];
-                corrected[i + 2] = corrected[i + 3] = dataBits[1];
-                corrected[i + 4] = corrected[i + 5] = dataBits[2];
-            } else {
-                // determine correct parity
-                parityBit = eightBits[0] ^ eightBits[2] ^ eightBits[4];
-
-                // set parity into corrected array
-                corrected[i + 6] = corrected[i + 7] = parityBit;
+            if (badBit != 0) {
+                received[receivedIndex + badBit - 1] = !received[receivedIndex + badBit - 1];
             }
         }
 
-        return corrected;
+        return received;
     }
 
     private boolean[] decodeCorrected(boolean[] corrected) {
-        boolean[] decoded = new boolean[corrected.length / 8 * 3];
-        int decodedIndex = 0;
+        boolean[] decoded = new boolean[corrected.length / 2];
 
-        for (int i = 0; i < corrected.length; i += 8) {
-            decoded[decodedIndex] = corrected[i];
-            decodedIndex++;
-            decoded[decodedIndex] = corrected[i + 2];
-            decodedIndex++;
-            decoded[decodedIndex] = corrected[i + 4];
-            decodedIndex++;
+        for (int correctedIndex = 0, decodedIndex = 0;
+                correctedIndex < corrected.length;
+                correctedIndex += 8, decodedIndex += 4) {
+            decoded[decodedIndex] = corrected[correctedIndex + 2];
+            decoded[decodedIndex + 1] = corrected[correctedIndex + 4];
+            decoded[decodedIndex + 2] = corrected[correctedIndex + 5];
+            decoded[decodedIndex + 3] = corrected[correctedIndex + 6];
         }
 
         return decoded;
     }
 
-    private Boolean[] setDataBits(boolean[] eightBits) {
-        Boolean[] dataBits = new Boolean[3];
-
-        for (int i = 0; i < 3; i++) {
-            dataBits[i] = setBitOrNull(eightBits[i * 2], eightBits[i * 2 + 1]);
-        }
-
-        return dataBits;
+    private boolean isOnesParityBad(final boolean[] received, int receivedIndex) {
+        int sum = IntStream.of(0, 2, 4, 6)
+                .map(i -> received[receivedIndex + i] ? 1 : 0)
+                .sum();
+        return sum % 2 != 0;
     }
 
-    private Boolean setBitOrNull(boolean bitOne, boolean bitTwo) {
-        return bitOne != bitTwo ? null : bitOne;
+    private boolean isTwosParityBad(boolean[] received, int receivedIndex) {
+        int sum = IntStream.of(1, 2, 5, 6)
+                .map(i -> received[receivedIndex + i] ? 1 : 0)
+                .sum();
+        return sum % 2 != 0;
     }
 
-    // -1 is not found
-    private int findNullIndex(Boolean[] dataBits) {
-        for (int foundIndex = 0; foundIndex < 3; foundIndex++) {
-            if (dataBits[foundIndex] == null) {
-                return foundIndex;
-            }
-        }
-
-        return -1;
+    private boolean isFoursParityBad(boolean[] received, int receivedIndex) {
+        int sum = IntStream.of(3, 4, 5, 6)
+                .map(i -> received[receivedIndex + i] ? 1 : 0)
+                .sum();
+        return sum % 2 != 0;
     }
 
-    private boolean[] setTwoBits(Boolean[] dataBits) {
-        boolean[] twoBits = new boolean[2];
-        int twoBitsIndex = 0;
+    private int calculateBadBit(boolean[] badParity) {
+        int sum = 0;
+        sum += badParity[0] ? 1 : 0;
+        sum += badParity[1] ? 2 : 0;
+        sum += badParity[2] ? 4 : 0;
 
-        for (Boolean dataBit : dataBits) {
-            if (dataBit != null) {
-                twoBits[twoBitsIndex] = dataBit;
-                twoBitsIndex++;
-            }
-        }
-
-        return twoBits;
+        return sum;
     }
+
 }
